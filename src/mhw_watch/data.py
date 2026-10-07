@@ -27,6 +27,7 @@ import requests
 from . import config
 
 FIRST_DAY = date(1981, 9, 1)
+THROTTLE_WAITS = (15, 30, 60, 120)  # s d'attente successives après une réponse 429
 
 
 class DownloadError(RuntimeError):
@@ -34,22 +35,32 @@ class DownloadError(RuntimeError):
 
 
 def _request(url: str) -> str:
-    """GET avec une nouvelle tentative sur les erreurs réseau et les erreurs 5xx."""
+    """GET avec nouvelles tentatives sur les erreurs réseau, 5xx et 429 (trop de requêtes)."""
     retries = config.get_int("RETRIES")
     timeout = (config.get_int("CONNECT_TIMEOUT"), config.get_int("READ_TIMEOUT"))
-    for attempt in range(retries + 1):
+    attempt = throttled = 0
+    while True:
         try:
             resp = requests.get(url, timeout=timeout)
         except (requests.ConnectionError, requests.Timeout):
             if attempt == retries:
                 raise
-        else:
-            # 404 : jeu de données absent de ce serveur, inutile d'insister.
-            if resp.status_code < 500 or attempt == retries:
-                resp.raise_for_status()
-                return resp.text
-        time.sleep(2 * (attempt + 1))
-    raise AssertionError("inaccessible")
+            attempt += 1
+            time.sleep(2 * attempt)
+            continue
+        if resp.status_code == 429 and throttled < len(THROTTLE_WAITS):
+            # Le serveur demande de ralentir : on attend (Retry-After si fourni) puis on reprend.
+            wait = resp.headers.get("Retry-After", "")
+            time.sleep(int(wait) if wait.isdigit() else THROTTLE_WAITS[throttled])
+            throttled += 1
+            continue
+        if resp.status_code >= 500 and attempt < retries:
+            attempt += 1
+            time.sleep(2 * attempt)
+            continue
+        # 404 : jeu de données absent de ce serveur, inutile d'insister.
+        resp.raise_for_status()
+        return resp.text
 
 
 # --- NOAA PSL (OPeNDAP) -------------------------------------------------------------
@@ -59,6 +70,27 @@ def _psl_indices(lat: float, lon: float) -> tuple[int, int]:
     i = math.floor((lat + 89.875) / 0.25 + 0.5)
     j = math.floor(((lon % 360) - 0.125) / 0.25 + 0.5) % 1440
     return min(max(i, 0), 719), j
+
+
+def _psl_ocean_cell(i: int, j: int, radius: int = 2) -> tuple[int, int]:
+    """Maille océan la plus proche de (i, j) : la côte peut tomber dans une maille « terre »."""
+    i0, i1 = max(i - radius, 0), min(i + radius, 719)
+    j0, j1 = max(j - radius, 0), min(j + radius, 1439)
+    url = (f"{config.get('PSL_URL')}/sst.day.mean.2000.nc.ascii?"
+           f"sst%5B0:1:0%5D%5B{i0}:1:{i1}%5D%5B{j0}:1:{j1}%5D")
+    body = _request(url).split("---------------------------------------------", 1)[-1]
+    rows = re.findall(r"^\s*\[0\]\[(\d+)\],(.*)$", body, flags=re.MULTILINE)
+    best = None
+    for k, values in rows:
+        for m, v in enumerate(values.split(",")):
+            if -3 <= float(v) <= 45:
+                ci, cj = i0 + int(k), j0 + m
+                d = (ci - i) ** 2 + (cj - j) ** 2
+                if best is None or d < best[0]:
+                    best = (d, ci, cj)
+    if best is None:
+        raise ValueError("aucune maille océan à proximité du point demandé")
+    return best[1], best[2]
 
 
 def _psl_ndays(year: int) -> int:
@@ -114,14 +146,15 @@ def _psl_year(year: int, i: int, j: int, cache_dir: Path | None) -> pd.DataFrame
         url = f"{psl}/sst.day.mean.{year}.nc.ascii?sst%5B{a}:1:{b}%5D%5B{i}%5D%5B{j}%5D"
         parts.append(_parse_psl_ascii(_request(url)))
     df = pd.concat(parts)
-    if cache is not None and year < date.today().year:
+    if cache is not None and year < date.today().year and df["sst"].notna().any():
         cache_dir.mkdir(parents=True, exist_ok=True)
         df.to_csv(cache, index=False)
     return df
 
 
 def _fetch_psl(lat: float, lon: float, start: date, end: date, cache_dir: Path | None) -> pd.DataFrame:
-    i, j = _psl_indices(lat, lon)
+    i, j = _psl_ocean_cell(*_psl_indices(lat, lon))
+    print(f"  Maille océan utilisée : {-89.875 + 0.25 * i:.3f}, {0.125 + 0.25 * j:.3f} (0-360°E)")
     years = range(start.year, end.year + 1)
     print(f"  {len(years)} années à télécharger (plusieurs minutes la première fois ; "
           "une interruption reprend là où elle s'est arrêtée).")
@@ -167,7 +200,11 @@ def _fetch_erddap(lat: float, lon: float, start: date, end: date, server: str) -
         print(f"  … {cur.year}-{stop.year}")
         chunks.append(_fetch_chunk(lat, lon, cur, stop, server))
         cur = stop + timedelta(days=1)
-    return pd.concat(chunks)
+    df = pd.concat(chunks)
+    if df["sst"].isna().all():
+        # ERDDAP prend la maille la plus proche, qui peut être une maille « terre ».
+        raise ValueError("maille terre, aucune SST")
+    return df
 
 
 def _short_reason(e: Exception) -> str:
@@ -181,7 +218,7 @@ def _short_reason(e: Exception) -> str:
         code = e.response.status_code
         return "jeu de données absent (404)" if code == 404 else f"erreur HTTP {code}"
     if isinstance(e, ValueError):
-        return "réponse illisible"
+        return str(e) or "réponse illisible"
     return type(e).__name__
 
 
@@ -244,9 +281,12 @@ def fetch_sst(
         if cache.exists():
             s = pd.read_csv(cache, index_col=0, parse_dates=True).iloc[:, 0]
             s.name = "sst"
-            return s
+            if s.notna().any():
+                return s
 
     df = _download(lat, lon, start, end, cache_dir).dropna().drop_duplicates("time")
+    if df.empty:
+        raise DownloadError(f"Aucune SST valide pour ({lat}, {lon}) : le point est-il bien en mer ?")
     s = df.set_index("time")["sst"].asfreq("D").interpolate(limit=5)
     if cache is not None:
         s.to_csv(cache)

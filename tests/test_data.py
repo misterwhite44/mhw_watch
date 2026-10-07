@@ -37,13 +37,14 @@ sst.lon[1]
 
 
 class FakeResponse:
-    status_code = 200
-
-    def __init__(self, text):
+    def __init__(self, text, status_code=200, headers=None):
         self.text = text
+        self.status_code = status_code
+        self.headers = headers or {}
 
     def raise_for_status(self):
-        pass
+        if self.status_code >= 400:
+            raise requests.HTTPError(response=self)
 
 
 @pytest.fixture(autouse=True)
@@ -81,6 +82,31 @@ def test_falls_back_to_next_erddap_mirror(monkeypatch):
     assert "upwell.pfeg" in calls[-1]
 
 
+# Bloc 5x5 autour de (532, 25), 1er janvier 2000 : la maille centrale est « terre ».
+PSL_BLOCK = """Dataset {
+} Datasets/noaa.oisst.v2.highres/sst.day.mean.2000.nc;
+---------------------------------------------
+sst.sst[1][5][5]
+[0][0], 13.4, 13.36, 13.25, 13.08, 13.09
+[0][1], 13.9, 13.83, 13.66, 13.48, 13.19
+[0][2], 14.3, 14.22, -9.96921E36, 13.89, 13.65
+[0][3], -9.96921E36, -9.96921E36, -9.96921E36, -9.96921E36, 14.08
+[0][4], -9.96921E36, -9.96921E36, -9.96921E36, -9.96921E36, -9.96921E36
+
+sst.time[1]
+72684.0
+"""
+
+
+def test_psl_ocean_cell_skips_land(monkeypatch):
+    monkeypatch.setattr(data.requests, "get", lambda url, timeout: FakeResponse(PSL_BLOCK))
+    assert data._psl_ocean_cell(532, 25) == (531, 25)
+
+
+def fake_psl(url):
+    return FakeResponse(PSL_BLOCK if "sst.day.mean.2000" in url else PSL_ASCII)
+
+
 def test_falls_back_to_psl_when_erddap_down(monkeypatch, tmp_path):
     calls = []
 
@@ -88,14 +114,35 @@ def test_falls_back_to_psl_when_erddap_down(monkeypatch, tmp_path):
         calls.append(url)
         if "erddap" in url:
             raise requests.ConnectTimeout("timeout")
-        return FakeResponse(PSL_ASCII)
+        return fake_psl(url)
 
     monkeypatch.setattr(data.requests, "get", fake_get)
     monkeypatch.setattr(data, "_psl_ndays", lambda year: 3)
     s = data.fetch_sst(43.0, 6.4, start=date(2024, 1, 1), end=date(2024, 1, 2), cache_dir=tmp_path)
     assert s.round(2).tolist() == [13.66, 13.68]
-    assert "sst.day.mean.2024.nc.ascii?sst%5B0:1:2%5D%5B532%5D%5B25%5D" in calls[-1]
-    assert (tmp_path / "psl" / "psl_532_25_2024.csv").exists()
+    assert "sst.day.mean.2024.nc.ascii?sst%5B0:1:2%5D%5B531%5D%5B25%5D" in calls[-1]
+    assert (tmp_path / "psl" / "psl_531_25_2024.csv").exists()
+
+
+def test_land_cell_on_erddap_falls_through_and_empty_cache_ignored(monkeypatch, tmp_path):
+    land = ERDDAP_CSV.replace(",14.1", ",NaN").replace(",14.0", ",NaN")
+    (tmp_path / "oisst_+43.000_+6.400_2024-01-01_2024-01-02.csv").write_text("time,sst\n")
+
+    def fake_get(url, timeout):
+        return FakeResponse(land) if "erddap" in url else fake_psl(url)
+
+    monkeypatch.setattr(data.requests, "get", fake_get)
+    monkeypatch.setattr(data, "_psl_ndays", lambda year: 3)
+    s = data.fetch_sst(43.0, 6.4, start=date(2024, 1, 1), end=date(2024, 1, 2), cache_dir=tmp_path)
+    assert s.round(2).tolist() == [13.66, 13.68]
+
+
+def test_429_waits_then_retries(monkeypatch):
+    waits, replies = [], [FakeResponse("", 429, {"Retry-After": "7"}), FakeResponse("", 429), FakeResponse("ok")]
+    monkeypatch.setattr(data.time, "sleep", waits.append)
+    monkeypatch.setattr(data.requests, "get", lambda url, timeout: replies.pop(0))
+    assert data._request("https://psl.noaa.gov/x") == "ok"
+    assert waits == [7, data.THROTTLE_WAITS[1]]
 
 
 def test_all_sources_down_raises_clear_error(monkeypatch):
@@ -129,7 +176,7 @@ def test_sources_order_from_settings(monkeypatch):
 
     def fake_get(url, timeout):
         calls.append(url)
-        return FakeResponse(PSL_ASCII)
+        return fake_psl(url)
 
     monkeypatch.setenv("MHW_WATCH_SOURCES", "psl")
     monkeypatch.setattr(data.requests, "get", fake_get)

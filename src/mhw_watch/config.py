@@ -21,7 +21,7 @@ DEFAULTS = {
     # Serveur THREDDS/OPeNDAP de NOAA PSL (un fichier sst.day.mean.AAAA.nc par année).
     "PSL_URL": "https://psl.noaa.gov/thredds/dodsC/Datasets/noaa.oisst.v2.highres",
     "PSL_DAYS": "90",  # jours par requête : PSL coupe les requêtes au-delà d'environ 60 s
-    "PSL_WORKERS": "4",  # années téléchargées en parallèle
+    "PSL_WORKERS": "2",  # années téléchargées en parallèle (PSL limite le débit au-delà)
     "CONNECT_TIMEOUT": "10",  # s : un serveur injoignable est vite abandonné
     "READ_TIMEOUT": "180",  # s : une grosse requête peut être longue à préparer côté serveur
     "RETRIES": "1",  # nouvelles tentatives par serveur après un échec réseau
