@@ -70,7 +70,11 @@ Références :
 ## Données
 
 - **NOAA OISST v2.1** : SST quotidienne, grille 0,25°, depuis septembre 1981, combinant satellites (AVHRR), navires et bouées.
-- Accès via le serveur **ERDDAP** de NOAA CoastWatch (`ncdcOisst21Agg_LonPM180`), sans clé d'API.
+- Accès sans clé d'API, par deux chemins essayés dans l'ordre :
+  1. les serveurs **ERDDAP** de NOAA CoastWatch (`ncdcOisst21Agg_LonPM180` sur `coastwatch.pfeg.noaa.gov` puis `upwell.pfeg.noaa.gov`), rapides ;
+  2. en secours, le serveur THREDDS/OPeNDAP de **NOAA PSL** (`noaa.oisst.v2.highres`). Il est lent (~0,3 s par jour demandé, soit de l'ordre de 20 minutes pour 1982 → aujourd'hui) ; chaque année téléchargée est gardée dans `data/psl/`, donc une interruption reprend là où elle s'est arrêtée.
+- Délai de connexion court et une nouvelle tentative par serveur. Pour imposer un autre serveur ERDDAP qui sert le même jeu de données : `MHW_WATCH_ERDDAP=https://mon-serveur/erddap` (PowerShell : `$env:MHW_WATCH_ERDDAP = "https://mon-serveur/erddap"`).
+- Si aucun serveur ne répond (réseau filtré, panne NOAA), la commande s'arrête avec un message explicatif ; `--demo` fonctionne toujours hors ligne.
 - Limite connue : une résolution de 0,25° (~25 km) lisse les phénomènes très côtiers. Voir la feuille de route pour passer à des produits plus fins.
 
 ## Structure
@@ -79,7 +83,7 @@ Références :
 mhw-watch/
 ├── src/mhw_watch/
 │   ├── cli.py         # ligne de commande (sites, analyze)
-│   ├── data.py        # téléchargement NOAA OISST via ERDDAP + cache
+│   ├── data.py        # téléchargement NOAA OISST (ERDDAP, PSL en secours) + cache
 │   ├── detect.py      # climatologie, détection et catégories (Hobday)
 │   ├── plot.py        # graphiques
 │   ├── sites.py       # AMP préconfigurées

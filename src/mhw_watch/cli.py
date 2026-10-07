@@ -10,6 +10,7 @@ Exemples :
 from __future__ import annotations
 
 import argparse
+import sys
 from datetime import date
 from pathlib import Path
 
@@ -28,7 +29,7 @@ def cmd_analyze(args: argparse.Namespace) -> None:
 
         key, name, sst = "demo", "Site de démonstration (données synthétiques)", synthetic_sst()
     else:
-        from .data import fetch_sst
+        from .data import DownloadError, fetch_sst
 
         if args.lat is not None and args.lon is not None:
             key, name, lat, lon = args.name.lower().replace(" ", "-"), args.name, args.lat, args.lon
@@ -36,7 +37,10 @@ def cmd_analyze(args: argparse.Namespace) -> None:
             site = get_site(args.site)
             key, name, lat, lon = site.key, site.name, site.lat, site.lon
         print(f"Téléchargement NOAA OISST pour {name} ({lat}, {lon})…")
-        sst = fetch_sst(lat, lon, start=date.fromisoformat(args.start), cache_dir=Path(args.data_dir))
+        try:
+            sst = fetch_sst(lat, lon, start=date.fromisoformat(args.start), cache_dir=Path(args.data_dir))
+        except DownloadError as e:
+            sys.exit(f"\nErreur : {e}")
 
     events, daily = detect.detect(sst, baseline=(args.baseline_start, args.baseline_end))
     summary = detect.yearly_summary(daily)
