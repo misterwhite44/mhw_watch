@@ -5,17 +5,16 @@ Source : NOAA Optimum Interpolation SST v2.1, grille 0,25°, quotidienne depuis 
 https://www.ncei.noaa.gov/products/optimum-interpolation-sst
 
 Deux accès au même jeu de données sont essayés dans l'ordre :
-1. les serveurs ERDDAP de NOAA CoastWatch, rapides (on peut en imposer un autre avec la
-   variable d'environnement MHW_WATCH_ERDDAP, URL se terminant par /erddap) ;
+1. les serveurs ERDDAP de NOAA CoastWatch, rapides ;
 2. le serveur THREDDS/OPeNDAP de NOAA PSL, en secours : fiable mais lent (~0,3 s par jour
-   demandé), donc interrogé par trimestres, en parallèle, avec un cache par année.
+   demandé), donc interrogé par tranches, en parallèle, avec un cache par année.
+Les serveurs, l'ordre des sources et les délais se règlent dans `.env` (voir config.py).
 """
 
 from __future__ import annotations
 
 import io
 import math
-import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -25,21 +24,9 @@ from pathlib import Path
 import pandas as pd
 import requests
 
-PSL = "https://psl.noaa.gov/thredds/dodsC/Datasets/noaa.oisst.v2.highres"
-PSL_DAYS = 90  # jours par requête : PSL coupe les requêtes au-delà d'environ 60 s
-PSL_WORKERS = 4  # années téléchargées en parallèle
+from . import config
 
-# Serveurs ERDDAP servant le même jeu de données, essayés dans cet ordre.
-ERDDAP_SERVERS = [
-    "https://coastwatch.pfeg.noaa.gov/erddap",
-    "https://upwell.pfeg.noaa.gov/erddap",
-]
-DATASET = "ncdcOisst21Agg_LonPM180"
 FIRST_DAY = date(1981, 9, 1)
-
-CONNECT_TIMEOUT = 10  # s : un serveur injoignable est vite abandonné
-READ_TIMEOUT = 180  # s : une tranche de 10 ans peut être longue à préparer côté serveur
-RETRIES = 1  # nouvelle tentative par serveur après un échec réseau
 
 
 class DownloadError(RuntimeError):
@@ -48,15 +35,17 @@ class DownloadError(RuntimeError):
 
 def _request(url: str) -> str:
     """GET avec une nouvelle tentative sur les erreurs réseau et les erreurs 5xx."""
-    for attempt in range(RETRIES + 1):
+    retries = config.get_int("RETRIES")
+    timeout = (config.get_int("CONNECT_TIMEOUT"), config.get_int("READ_TIMEOUT"))
+    for attempt in range(retries + 1):
         try:
-            resp = requests.get(url, timeout=(CONNECT_TIMEOUT, READ_TIMEOUT))
+            resp = requests.get(url, timeout=timeout)
         except (requests.ConnectionError, requests.Timeout):
-            if attempt == RETRIES:
+            if attempt == retries:
                 raise
         else:
             # 404 : jeu de données absent de ce serveur, inutile d'insister.
-            if resp.status_code < 500 or attempt == RETRIES:
+            if resp.status_code < 500 or attempt == retries:
                 resp.raise_for_status()
                 return resp.text
         time.sleep(2 * (attempt + 1))
@@ -76,7 +65,7 @@ def _psl_ndays(year: int) -> int:
     """Nombre de jours présents dans le fichier annuel (l'année en cours est incomplète)."""
     if year < date.today().year:
         return 366 if pd.Timestamp(year=year, month=12, day=31).dayofyear == 366 else 365
-    dds = _request(f"{PSL}/sst.day.mean.{year}.nc.dds")
+    dds = _request(f"{config.get('PSL_URL')}/sst.day.mean.{year}.nc.dds")
     m = re.search(r"time\s*=\s*(\d+)", dds)
     if not m:
         raise ValueError("réponse PSL inattendue")
@@ -114,14 +103,15 @@ def _parse_psl_ascii(text: str) -> pd.DataFrame:
 
 def _psl_year(year: int, i: int, j: int, cache_dir: Path | None) -> pd.DataFrame:
     """Une année de PSL, par tranches de PSL_DAYS jours ; les années complètes sont mises en cache."""
+    psl, step = config.get("PSL_URL"), config.get_int("PSL_DAYS")
     cache = cache_dir / f"psl_{i}_{j}_{year}.csv" if cache_dir is not None else None
     if cache is not None and cache.exists():
         return pd.read_csv(cache, parse_dates=["time"])
     n = _psl_ndays(year)
     parts = []
-    for a in range(0, n, PSL_DAYS):
-        b = min(a + PSL_DAYS, n) - 1
-        url = f"{PSL}/sst.day.mean.{year}.nc.ascii?sst%5B{a}:1:{b}%5D%5B{i}%5D%5B{j}%5D"
+    for a in range(0, n, step):
+        b = min(a + step, n) - 1
+        url = f"{psl}/sst.day.mean.{year}.nc.ascii?sst%5B{a}:1:{b}%5D%5B{i}%5D%5B{j}%5D"
         parts.append(_parse_psl_ascii(_request(url)))
     df = pd.concat(parts)
     if cache is not None and year < date.today().year:
@@ -136,7 +126,7 @@ def _fetch_psl(lat: float, lon: float, start: date, end: date, cache_dir: Path |
     print(f"  {len(years)} années à télécharger (plusieurs minutes la première fois ; "
           "une interruption reprend là où elle s'est arrêtée).")
     chunks = []
-    with ThreadPoolExecutor(PSL_WORKERS) as pool:
+    with ThreadPoolExecutor(config.get_int("PSL_WORKERS")) as pool:
         futures = [pool.submit(_psl_year, y, i, j, cache_dir) for y in years]
         try:
             for k, fut in enumerate(as_completed(futures), 1):
@@ -153,18 +143,12 @@ def _fetch_psl(lat: float, lon: float, start: date, end: date, cache_dir: Path |
 
 # --- ERDDAP (CoastWatch) ------------------------------------------------------------
 
-def _servers() -> list[str]:
-    custom = os.environ.get("MHW_WATCH_ERDDAP")
-    servers = [custom.rstrip("/")] if custom else []
-    return servers + [s for s in ERDDAP_SERVERS if s not in servers]
-
-
 def _query_url(server: str, lat: float, lon: float, start: date, end: date) -> str:
     sel = (
         f"sst[({start}T12:00:00Z):1:({end}T12:00:00Z)]"
         f"[(0.0)][({lat}):1:({lat})][({lon}):1:({lon})]"
     )
-    return f"{server}/griddap/{DATASET}.csv?" + requests.utils.quote(sel, safe="():,.-T")
+    return f"{server}/griddap/{config.get('ERDDAP_DATASET')}.csv?" + requests.utils.quote(sel, safe="():,.-T")
 
 
 def _fetch_chunk(lat: float, lon: float, start: date, end: date, server: str) -> pd.DataFrame:
@@ -205,12 +189,19 @@ def _download(
     lat: float, lon: float, start: date, end: date, cache_dir: Path | None
 ) -> pd.DataFrame:
     """Essaie chaque source dans l'ordre et renvoie la première qui fournit les données."""
-    sources = [
-        (server.split("/")[2], lambda s=server: _fetch_erddap(lat, lon, start, end, s))
-        for server in _servers()
-    ]
     psl_cache = cache_dir / "psl" if cache_dir is not None else None
-    sources.append(("psl.noaa.gov", lambda: _fetch_psl(lat, lon, start, end, psl_cache)))
+    sources = []
+    for kind in config.get_list("SOURCES"):
+        if kind == "erddap":
+            sources += [
+                (server.split("/")[2], lambda s=server: _fetch_erddap(lat, lon, start, end, s))
+                for server in config.get_list("ERDDAP_SERVERS")
+            ]
+        elif kind == "psl":
+            host = config.get("PSL_URL").split("/")[2]
+            sources.append((host, lambda: _fetch_psl(lat, lon, start, end, psl_cache)))
+        else:
+            raise DownloadError(f"Source inconnue dans MHW_WATCH_SOURCES : {kind!r} (attendu : erddap, psl)")
 
     errors = []
     for host, fetch in sources:
@@ -226,7 +217,7 @@ def _download(
         + "\n\nPistes :\n"
         "  - vérifie ta connexion ; un réseau d'école, d'entreprise ou un VPN bloque parfois ces serveurs ;\n"
         "  - réessaie plus tard (les serveurs NOAA ont des interruptions) ;\n"
-        "  - indique un autre serveur ERDDAP avec la variable d'environnement MHW_WATCH_ERDDAP ;\n"
+        "  - change les serveurs ou l'ordre des sources dans le fichier .env ;\n"
         "  - en attendant, lance `mhw-watch analyze --demo` (données synthétiques, hors ligne)."
     )
 

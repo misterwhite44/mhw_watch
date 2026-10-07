@@ -49,7 +49,8 @@ class FakeResponse:
 @pytest.fixture(autouse=True)
 def no_sleep(monkeypatch):
     monkeypatch.setattr(data.time, "sleep", lambda s: None)
-    monkeypatch.delenv("MHW_WATCH_ERDDAP", raising=False)
+    for name in data.config.DEFAULTS:
+        monkeypatch.delenv(data.config.PREFIX + name, raising=False)
 
 
 def test_psl_indices_nearest_cell():
@@ -106,6 +107,32 @@ def test_all_sources_down_raises_clear_error(monkeypatch):
         data.fetch_sst(43.0, 6.4, start=date(2024, 1, 1), end=date(2024, 1, 2), cache_dir=None)
 
 
-def test_custom_server_tried_first(monkeypatch):
-    monkeypatch.setenv("MHW_WATCH_ERDDAP", "https://example.org/erddap/")
-    assert data._servers()[0] == "https://example.org/erddap"
+def test_settings_from_dotenv(monkeypatch, tmp_path):
+    env = tmp_path / ".env"
+    env.write_text(
+        "# commentaire\n"
+        "MHW_WATCH_ERDDAP_SERVERS=https://example.org/erddap/, https://autre.org/erddap\n"
+        'MHW_WATCH_PSL_WORKERS="2"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MHW_WATCH_RETRIES", "3")  # le terminal l'emporte sur .env
+    env.write_text(env.read_text(encoding="utf-8") + "MHW_WATCH_RETRIES=0\n", encoding="utf-8")
+    data.config.load_dotenv(env)
+    assert data.config.get_list("ERDDAP_SERVERS") == ["https://example.org/erddap", "https://autre.org/erddap"]
+    assert data.config.get_int("PSL_WORKERS") == 2
+    assert data.config.get_int("RETRIES") == 3
+    assert data.config.get("ERDDAP_DATASET") == "ncdcOisst21Agg_LonPM180"  # valeur par défaut
+
+
+def test_sources_order_from_settings(monkeypatch):
+    calls = []
+
+    def fake_get(url, timeout):
+        calls.append(url)
+        return FakeResponse(PSL_ASCII)
+
+    monkeypatch.setenv("MHW_WATCH_SOURCES", "psl")
+    monkeypatch.setattr(data.requests, "get", fake_get)
+    monkeypatch.setattr(data, "_psl_ndays", lambda year: 3)
+    data.fetch_sst(43.0, 6.4, start=date(2024, 1, 1), end=date(2024, 1, 2), cache_dir=None)
+    assert all("psl.noaa.gov" in u for u in calls)

@@ -14,7 +14,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from . import detect, plot
+from . import config, detect, plot
 from .sites import SITES, get_site
 
 
@@ -86,6 +86,7 @@ def main(argv: list[str] | None = None) -> None:
     a.set_defaults(func=cmd_analyze)
 
     args = p.parse_args(argv)
+    config.load_dotenv()
     args.func(args)
 
 

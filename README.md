@@ -73,7 +73,7 @@ Références :
 - Accès sans clé d'API, par deux chemins essayés dans l'ordre :
   1. les serveurs **ERDDAP** de NOAA CoastWatch (`ncdcOisst21Agg_LonPM180` sur `coastwatch.pfeg.noaa.gov` puis `upwell.pfeg.noaa.gov`), rapides ;
   2. en secours, le serveur THREDDS/OPeNDAP de **NOAA PSL** (`noaa.oisst.v2.highres`). Il est lent (~0,3 s par jour demandé, soit de l'ordre de 20 minutes pour 1982 → aujourd'hui) ; chaque année téléchargée est gardée dans `data/psl/`, donc une interruption reprend là où elle s'est arrêtée.
-- Délai de connexion court et une nouvelle tentative par serveur. Pour imposer un autre serveur ERDDAP qui sert le même jeu de données : `MHW_WATCH_ERDDAP=https://mon-serveur/erddap` (PowerShell : `$env:MHW_WATCH_ERDDAP = "https://mon-serveur/erddap"`).
+- **Réglages dans `.env`** : serveurs ERDDAP, ordre des sources (`erddap,psl`), adresse PSL, taille des requêtes, parallélisme, délais et nouvelles tentatives. Copie `.env.example` en `.env` (PowerShell : `Copy-Item .env.example .env`) et modifie ce dont tu as besoin ; un réglage absent garde sa valeur par défaut, et une variable définie dans le terminal l'emporte sur le `.env`. Le `.env` n'est pas versionné.
 - Si aucun serveur ne répond (réseau filtré, panne NOAA), la commande s'arrête avec un message explicatif ; `--demo` fonctionne toujours hors ligne.
 - Limite connue : une résolution de 0,25° (~25 km) lisse les phénomènes très côtiers. Voir la feuille de route pour passer à des produits plus fins.
 
@@ -83,6 +83,7 @@ Références :
 mhw-watch/
 ├── src/mhw_watch/
 │   ├── cli.py         # ligne de commande (sites, analyze)
+│   ├── config.py      # réglages des sources (variables MHW_WATCH_*, fichier .env)
 │   ├── data.py        # téléchargement NOAA OISST (ERDDAP, PSL en secours) + cache
 │   ├── detect.py      # climatologie, détection et catégories (Hobday)
 │   ├── plot.py        # graphiques
