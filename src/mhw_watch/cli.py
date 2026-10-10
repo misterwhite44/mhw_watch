@@ -6,6 +6,8 @@ Exemples :
     python -m mhw_watch analyze --lat 43.2 --lon 5.3 --name "Calanques"
     python -m mhw_watch analyze --demo          # sans réseau, données synthétiques
     python -m mhw_watch dashboard               # tableau de bord web (navigateur)
+    python -m mhw_watch analyze --site all      # tous les sites connus
+    python -m mhw_watch export-site --dest site # tableau de bord en HTML statique (GitHub Pages)
 """
 
 from __future__ import annotations
@@ -25,6 +27,20 @@ def cmd_sites(_: argparse.Namespace) -> None:
 
 
 def cmd_analyze(args: argparse.Namespace) -> None:
+    if args.site == "all" and not args.demo and args.lat is None:
+        # Un site en échec n'empêche pas les autres ; code de sortie 1 seulement si tous échouent.
+        failed = []
+        for key in SITES:
+            try:
+                cmd_analyze(argparse.Namespace(**{**vars(args), "site": key}))
+            except SystemExit as e:
+                print(e, file=sys.stderr)
+                failed.append(key)
+        if failed:
+            print(f"\nÉchec pour : {', '.join(failed)}", file=sys.stderr)
+            if len(failed) == len(SITES):
+                sys.exit(1)
+        return
     if args.demo:
         from .synthetic import synthetic_sst
 
@@ -73,6 +89,12 @@ def cmd_dashboard(args: argparse.Namespace) -> None:
     sys.exit(launch(out_dir=args.out, data_dir=args.data_dir, port=args.port, open_browser=not args.no_browser))
 
 
+def cmd_export_site(args: argparse.Namespace) -> None:
+    from .static_site import build_site
+
+    print(f"Site statique écrit : {build_site(args.out, args.dest)}")
+
+
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="mhw-watch", description="Vagues de chaleur marines dans les AMP")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -80,7 +102,7 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("sites", help="Lister les aires marines protégées connues").set_defaults(func=cmd_sites)
 
     a = sub.add_parser("analyze", help="Détecter les vagues de chaleur sur un site")
-    a.add_argument("--site", default="port-cros", help="Clé d'un site (voir `sites`)")
+    a.add_argument("--site", default="port-cros", help="Clé d'un site (voir `sites`), ou `all`")
     a.add_argument("--lat", type=float, help="Latitude d'un point libre")
     a.add_argument("--lon", type=float, help="Longitude d'un point libre (-180..180)")
     a.add_argument("--name", default="Point personnalisé", help="Nom affiché avec --lat/--lon")
@@ -98,6 +120,11 @@ def main(argv: list[str] | None = None) -> None:
     d.add_argument("--port", type=int, help="Port du serveur web (8501 par défaut)")
     d.add_argument("--no-browser", action="store_true", help="Ne pas ouvrir le navigateur automatiquement")
     d.set_defaults(func=cmd_dashboard)
+
+    e = sub.add_parser("export-site", help="Exporter le tableau de bord en HTML statique (GitHub Pages)")
+    e.add_argument("--out", default="outputs", help="Dossier des résultats de `analyze`")
+    e.add_argument("--dest", default="site", help="Dossier où écrire le site")
+    e.set_defaults(func=cmd_export_site)
 
     args = p.parse_args(argv)
     config.load_dotenv()
