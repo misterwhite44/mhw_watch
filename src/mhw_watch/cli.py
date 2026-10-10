@@ -5,6 +5,7 @@ Exemples :
     python -m mhw_watch analyze --site port-cros
     python -m mhw_watch analyze --lat 43.2 --lon 5.3 --name "Calanques"
     python -m mhw_watch analyze --demo          # sans réseau, données synthétiques
+    python -m mhw_watch dashboard               # tableau de bord web (navigateur)
 """
 
 from __future__ import annotations
@@ -66,6 +67,12 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     print(f"\n  Résultats écrits dans {out}/")
 
 
+def cmd_dashboard(args: argparse.Namespace) -> None:
+    from .dashboard import launch
+
+    sys.exit(launch(out_dir=args.out, data_dir=args.data_dir, port=args.port, open_browser=not args.no_browser))
+
+
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="mhw-watch", description="Vagues de chaleur marines dans les AMP")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -84,6 +91,13 @@ def main(argv: list[str] | None = None) -> None:
     a.add_argument("--data-dir", default="data", help="Dossier de cache des données")
     a.add_argument("--out", default="outputs", help="Dossier des résultats")
     a.set_defaults(func=cmd_analyze)
+
+    d = sub.add_parser("dashboard", help="Ouvrir le tableau de bord web (carte des AMP)")
+    d.add_argument("--data-dir", default="data", help="Dossier de cache des données")
+    d.add_argument("--out", default="outputs", help="Dossier des résultats")
+    d.add_argument("--port", type=int, help="Port du serveur web (8501 par défaut)")
+    d.add_argument("--no-browser", action="store_true", help="Ne pas ouvrir le navigateur automatiquement")
+    d.set_defaults(func=cmd_dashboard)
 
     args = p.parse_args(argv)
     config.load_dotenv()

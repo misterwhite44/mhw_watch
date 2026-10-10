@@ -44,6 +44,21 @@ Sans installation : `PYTHONPATH=src python -m mhw_watch analyze --demo`.
 
 Le premier téléchargement d'un site (1982 → aujourd'hui) prend une à quelques minutes ; les suivants sont instantanés grâce au cache.
 
+### Tableau de bord web
+
+```bash
+mhw-watch dashboard
+```
+
+La commande ouvre le navigateur sur http://localhost:8501 (Ctrl+C dans le terminal pour arrêter). On y trouve :
+
+- une **carte des AMP** colorée selon leur état au dernier jour analysé : gris = pas de données, bleu = pas de vague de chaleur, jaune → bordeaux = vague de chaleur de catégorie I à IV ;
+- en cliquant sur un site (ou en le choisissant dans la liste) : la **SST face à la climatologie et au seuil** (12 mois, 5 ans, tout, ou une année au choix), les **jours de vague de chaleur par an** et le **tableau des événements**.
+
+Le tableau de bord relit les résultats déjà calculés dans `outputs/` : il ne télécharge rien au démarrage. Un site jamais analysé apparaît en « Pas de données », avec un bouton **Lancer l'analyse** (ou `mhw-watch analyze --site <clé>` dans un terminal). Le bouton **Mettre à jour les données de ce site** relance l'analyse pour récupérer les derniers jours.
+
+Options : `--port 8502` pour changer de port, `--no-browser` pour ne pas ouvrir le navigateur. Sans la commande : `streamlit run src/mhw_watch/dashboard_app.py`.
+
 ### Résultats (dans `outputs/<site>/`)
 
 | Fichier | Contenu |
@@ -82,7 +97,9 @@ Références :
 ```
 mhw-watch/
 ├── src/mhw_watch/
-│   ├── cli.py         # ligne de commande (sites, analyze)
+│   ├── cli.py         # ligne de commande (sites, analyze, dashboard)
+│   ├── dashboard.py   # logique du tableau de bord (état des sites, lecture des résultats)
+│   ├── dashboard_app.py  # interface web Streamlit (carte + historique)
 │   ├── config.py      # réglages des sources (variables MHW_WATCH_*, fichier .env)
 │   ├── data.py        # téléchargement NOAA OISST (ERDDAP, PSL en secours) + cache
 │   ├── detect.py      # climatologie, détection et catégories (Hobday)
@@ -101,7 +118,7 @@ Tests : `pytest`
 Idées pour faire grandir le projet, dans un ordre raisonnable :
 
 1. **Carte multi-AMP** : analyser toutes les AMP d'une région (contours depuis la base mondiale [WDPA / Protected Planet](https://www.protectedplanet.net/)) et moyenner la SST sur le polygone plutôt qu'en un point.
-2. **Tableau de bord web** (Streamlit ou FastAPI + Leaflet) : carte des AMP colorée par état actuel, clic pour voir l'historique.
+2. ~~**Tableau de bord web**~~ : fait (`mhw-watch dashboard`, voir plus haut).
 3. **Mise à jour automatique** : GitHub Actions quotidienne qui met à jour les données et publie le tableau de bord (GitHub Pages).
 4. **Alertes** : notification (e-mail, Mastodon/Bluesky) quand une AMP entre en catégorie II ou plus.
 5. **Données plus fines** : Copernicus Marine (SST Méditerranée haute résolution, produits `SST_MED_*`) via le paquet `copernicusmarine`.
