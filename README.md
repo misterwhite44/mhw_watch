@@ -8,7 +8,7 @@ MHW Watch télécharge 40+ ans de température de surface de la mer (SST) mesur�
 
 ![SST récente et vagues de chaleur (données de démo)](docs/recent.png)
 
-## Pourquoi ce projet (pour un portfolio « tech pour l'océan »)
+## Pourquoi ce projet
 
 - **Données réelles et reconnues** : NOAA OISST v2.1, utilisée par Copernicus, Mercator Ocean, l'Ifremer et la communauté scientifique.
 - **Méthode publiée** : la détection suit exactement la définition de Hobday, ce qui rend les résultats comparables à la littérature.
