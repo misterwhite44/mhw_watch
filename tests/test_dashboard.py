@@ -70,3 +70,16 @@ def test_history_window():
     assert (dashboard.history_window(daily, "2020").index.year == 2020).all()
     five = dashboard.history_window(daily, "5 ans")
     assert 1820 <= len(five) <= 1830
+
+
+def test_static_site_export(tmp_path):
+    from mhw_watch import static_site
+
+    write_outputs(tmp_path / "outputs", "test", synthetic_sst())
+    index = static_site.build_site(tmp_path / "outputs", tmp_path / "site", {"test": SITE, "other": Site(
+        "other", "Autre site", 0.0, 0.0, "Atlantique")})
+    html = index.read_text(encoding="utf-8")
+    assert 'id="test"' in html and "Site test" in html
+    assert "Pas encore de données" in html  # "other" n'a jamais été analysé
+    assert (tmp_path / "site" / "map.html").is_file()
+    assert (tmp_path / "site" / "test" / "daily.csv").is_file()

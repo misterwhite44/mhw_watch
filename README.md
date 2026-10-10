@@ -59,6 +59,12 @@ Le tableau de bord relit les résultats déjà calculés dans `outputs/` : il ne
 
 Options : `--port 8502` pour changer de port, `--no-browser` pour ne pas ouvrir le navigateur. Sans la commande : `streamlit run src/mhw_watch/dashboard_app.py`.
 
+### Version publiée en ligne (GitHub Pages)
+
+Le workflow [`.github/workflows/pages.yml`](.github/workflows/pages.yml) tourne chaque jour à 06:30 UTC : il analyse toutes les AMP (`mhw-watch analyze --site all`), puis publie une **version HTML statique** du tableau de bord sur GitHub Pages (`mhw-watch export-site --dest site`). GitHub Pages ne sert que des fichiers, donc pas de Streamlit en ligne : la page contient la carte (folium), l'état de chaque site, les graphiques PNG, les événements les plus intenses et les CSV à télécharger.
+
+Pour l'activer (une seule fois) : **Settings > Pages > Source : GitHub Actions**, puis onglet **Actions > Mise à jour quotidienne > Run workflow** pour une première publication sans attendre le lendemain. Le site est alors sur https://misterwhite44.github.io/mhw_watch/. Note : GitHub suspend les tâches planifiées d'un dépôt public sans activité pendant 60 jours (un clic sur « Enable workflow » les relance).
+
 ### Résultats (dans `outputs/<site>/`)
 
 | Fichier | Contenu |
@@ -97,9 +103,10 @@ Références :
 ```
 mhw-watch/
 ├── src/mhw_watch/
-│   ├── cli.py         # ligne de commande (sites, analyze, dashboard)
+│   ├── cli.py         # ligne de commande (sites, analyze, dashboard, export-site)
 │   ├── dashboard.py   # logique du tableau de bord (état des sites, lecture des résultats)
 │   ├── dashboard_app.py  # interface web Streamlit (carte + historique)
+│   ├── static_site.py # export HTML statique du tableau de bord (GitHub Pages)
 │   ├── config.py      # réglages des sources (variables MHW_WATCH_*, fichier .env)
 │   ├── data.py        # téléchargement NOAA OISST (ERDDAP, PSL en secours) + cache
 │   ├── detect.py      # climatologie, détection et catégories (Hobday)
@@ -118,8 +125,7 @@ Tests : `pytest`
 Idées pour faire grandir le projet, dans un ordre raisonnable :
 
 1. **Carte multi-AMP** : analyser toutes les AMP d'une région (contours depuis la base mondiale [WDPA / Protected Planet](https://www.protectedplanet.net/)) et moyenner la SST sur le polygone plutôt qu'en un point.
-2. ~~**Tableau de bord web**~~ : fait (`mhw-watch dashboard`, voir plus haut).
-3. **Mise à jour automatique** : GitHub Actions quotidienne qui met à jour les données et publie le tableau de bord (GitHub Pages).
+3. ~~**Mise à jour automatique**~~ : fait (workflow quotidien + GitHub Pages, voir plus haut).
 4. **Alertes** : notification (e-mail, Mastodon/Bluesky) quand une AMP entre en catégorie II ou plus.
 5. **Données plus fines** : Copernicus Marine (SST Méditerranée haute résolution, produits `SST_MED_*`) via le paquet `copernicusmarine`.
 6. **Impacts biologiques** : *Degree Heating Weeks* pour les coraux (NOAA Coral Reef Watch), croisement avec les observations de mortalité (base T-MEDNet en Méditerranée).

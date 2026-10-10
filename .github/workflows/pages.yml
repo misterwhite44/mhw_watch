@@ -1,0 +1,59 @@
+# Chaque jour : télécharge les dernières données NOAA, relance la détection sur toutes les AMP
+# et publie le tableau de bord (version HTML statique) sur GitHub Pages.
+# Prérequis (une seule fois) : Settings > Pages > Source = « GitHub Actions ».
+name: Mise à jour quotidienne
+
+on:
+  schedule:
+    - cron: "30 6 * * *" # 06:30 UTC
+  workflow_dispatch: # bouton « Run workflow » dans l'onglet Actions
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install .
+
+      # Années complètes déjà téléchargées depuis NOAA PSL (source de secours, lente).
+      - uses: actions/cache@v4
+        with:
+          path: data/psl
+          key: psl-${{ github.run_id }}
+          restore-keys: psl-
+
+      - name: Analyse de toutes les AMP
+        run: mhw-watch analyze --site all
+
+      - name: Export du site statique
+        run: mhw-watch export-site --out outputs --dest site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
