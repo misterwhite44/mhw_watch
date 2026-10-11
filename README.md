@@ -27,11 +27,17 @@ pip install -e ".[dev]"
 ## Utilisation
 
 ```bash
-# Lister les AMP préconfigurées
+# Lister les AMP préconfigurées, par région
 mhw-watch sites
 
 # Analyser une AMP (télécharge les données NOAA, mises en cache dans data/)
 mhw-watch analyze --site port-cros
+
+# Analyser toutes les AMP d'une région, avec un tableau récapitulatif
+mhw-watch analyze --region mediterranee
+
+# Analyser au point représentatif plutôt que sur le contour de l'AMP
+mhw-watch analyze --site iroise --area point
 
 # Analyser n'importe quel point du globe
 mhw-watch analyze --lat 43.2 --lon 5.35 --name "Calanques"
@@ -65,6 +71,19 @@ Le workflow [`.github/workflows/pages.yml`](.github/workflows/pages.yml) tourne 
 
 Pour l'activer (une seule fois) : **Settings > Pages > Source : GitHub Actions**, puis onglet **Actions > Mise à jour quotidienne > Run workflow** pour une première publication sans attendre le lendemain. Le site est alors sur https://misterwhite44.github.io/mhw_watch/. Note : GitHub suspend les tâches planifiées d'un dépôt public sans activité pendant 60 jours (un clic sur « Enable workflow » les relance).
 
+### Analyse sur le contour des AMP (WDPA)
+
+Par défaut, une AMP n'est plus réduite à un point : MHW Watch récupère son **contour officiel** dans la *World Database on Protected Areas* (WDPA, UNEP-WCMC / IUCN, [protectedplanet.net](https://www.protectedplanet.net)) et calcule chaque jour la **moyenne de la SST sur les mailles océan dont le centre tombe dans le contour** (pondérée par le cosinus de la latitude ; les mailles « terre » sont écartées).
+
+- **Accès aux contours** : service cartographique public d'UNEP-WCMC (ArcGIS REST, GeoJSON), **sans clé d'API ni secret GitHub**. Chaque contour est gardé dans `data/wdpa/<site_id>.geojson` (et dans le cache du workflow quotidien). L'API Protected Planet v3 demande, elle, un jeton délivré sur demande : elle n'est donc pas utilisée.
+- **Contour personnalisé** : déposer un GeoJSON (export protectedplanet.net ou tracé à la main) sous `data/wdpa/<site_id>.geojson` ; il est utilisé tel quel, sans réseau.
+- **Petites AMP** (moins de 4 centres de maille dans le contour, ex. Port-Cros, Scandola, Cerbère-Banyuls) : on prend les mailles qui touchent leur rectangle englobant, élargi d'une maille si besoin, car une ou deux mailles côtières peuvent être entièrement « terre ».
+- **Grandes AMP** (Grande Barrière, Galápagos, Papahānaumokuākea) : au-delà de `MHW_WATCH_MAX_CELLS` mailles (40 par défaut), sous-échantillonnage régulier (une maille sur *n* dans chaque direction) pour garder des téléchargements raisonnables. Les contours qui traversent l'antiméridien sont gérés.
+- **Repli** : si le service WDPA ne répond pas et qu'aucun contour n'est en cache, l'analyse se fait au point représentatif du site, avec un message.
+- Données WDPA : usage non commercial, à citer « UNEP-WCMC and IUCN, Protected Planet » ([conditions](https://www.protectedplanet.net/en/legal)).
+
+**Régions** : chaque AMP appartient à une région (`mhw-watch sites` les liste). `--region <clé>` analyse toutes les AMP d'une région et écrit un récapitulatif dans `outputs/regions/<région>.csv` (état au dernier jour, SST, anomalie, nombre d'événements). `MHW_WATCH_REGION` dans `.env` limite `--site all` (et donc le workflow quotidien) à une région.
+
 ### Résultats (dans `outputs/<site>/`)
 
 | Fichier | Contenu |
@@ -74,6 +93,9 @@ Pour l'activer (une seule fois) : **Settings > Pages > Source : GitHub Actions**
 | `daily.csv` | Série quotidienne : SST, moyenne climatologique, seuil, anomalie, catégorie |
 | `recent.png` | Les 12 derniers mois, vagues de chaleur colorées par catégorie |
 | `yearly.png` | Nombre de jours de vague de chaleur par an |
+| `zone.json` | Zone analysée : contour WDPA (mailles moyennées) ou point |
+
+Une analyse par région ajoute `outputs/regions/<région>.csv`, une ligne par AMP.
 
 ![Jours de MHW par an (données de démo)](docs/yearly.png)
 
@@ -96,7 +118,7 @@ Références :
   2. en secours, le serveur THREDDS/OPeNDAP de **NOAA PSL** (`noaa.oisst.v2.highres`). Il est lent (~0,3 s par jour demandé, soit de l'ordre de 20 minutes pour 1982 → aujourd'hui) ; chaque année téléchargée est gardée dans `data/psl/`, donc une interruption reprend là où elle s'est arrêtée.
 - **Réglages dans `.env`** : serveurs ERDDAP, ordre des sources (`erddap,psl`), adresse PSL, taille des requêtes, parallélisme, délais et nouvelles tentatives. Copie `.env.example` en `.env` (PowerShell : `Copy-Item .env.example .env`) et modifie ce dont tu as besoin ; un réglage absent garde sa valeur par défaut, et une variable définie dans le terminal l'emporte sur le `.env`. Le `.env` n'est pas versionné.
 - Si aucun serveur ne répond (réseau filtré, panne NOAA), la commande s'arrête avec un message explicatif ; `--demo` fonctionne toujours hors ligne.
-- Limite connue : une résolution de 0,25° (~25 km) lisse les phénomènes très côtiers. Voir la feuille de route pour passer à des produits plus fins.
+- Limite connue : une résolution de 0,25° (~25 km) lisse les phénomènes très côtiers ; pour les petites AMP, la moyenne porte sur les mailles voisines. Voir la feuille de route pour passer à des produits plus fins.
 
 ## Structure
 
@@ -111,7 +133,8 @@ mhw-watch/
 │   ├── data.py        # téléchargement NOAA OISST (ERDDAP, PSL en secours) + cache
 │   ├── detect.py      # climatologie, détection et catégories (Hobday)
 │   ├── plot.py        # graphiques
-│   ├── sites.py       # AMP préconfigurées
+│   ├── sites.py       # AMP préconfigurées (identifiant WDPA, région)
+│   ├── wdpa.py        # contours WDPA et choix des mailles à moyenner
 │   └── synthetic.py   # données de démo hors ligne
 ├── tests/             # pytest
 ├── data/              # cache des téléchargements (ignoré par git)

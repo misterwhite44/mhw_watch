@@ -25,6 +25,15 @@ DEFAULTS = {
     "CONNECT_TIMEOUT": "10",  # s : un serveur injoignable est vite abandonné
     "READ_TIMEOUT": "180",  # s : une grosse requête peut être longue à préparer côté serveur
     "RETRIES": "1",  # nouvelles tentatives par serveur après un échec réseau
+    # Zone analysée pour une AMP : "polygon" (moyenne sur le contour WDPA) ou "point".
+    "AREA": "polygon",
+    # Région analysée par `analyze --site all` (clé de région, voir `mhw-watch sites`) ; all = toutes.
+    "REGION": "all",
+    # Nombre maximal de mailles moyennées par AMP (au-delà, sous-échantillonnage régulier).
+    "MAX_CELLS": "40",
+    # Service cartographique public d'UNEP-WCMC servant les contours WDPA (couche polygones).
+    "WDPA_URL": "https://data-gis.unep-wcmc.org/server/rest/services/ProtectedSites/"
+                "The_World_Database_of_Protected_Areas/MapServer/1",
 }
 
 

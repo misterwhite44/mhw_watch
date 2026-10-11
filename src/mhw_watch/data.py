@@ -21,10 +21,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import requests
 
 from . import config
+from .wdpa import NLON, RES, Area, cell_index, lat_of, lon_runs
 
 FIRST_DAY = date(1981, 9, 1)
 THROTTLE_WAITS = (15, 30, 60, 120)  # s d'attente successives après une réponse 429
@@ -207,6 +209,141 @@ def _fetch_erddap(lat: float, lon: float, start: date, end: date, server: str) -
     return df
 
 
+# --- Moyenne sur une zone (contour WDPA) --------------------------------------------
+
+def _area_mean(df: pd.DataFrame, area: Area) -> pd.DataFrame:
+    """Moyenne quotidienne, pondérée par cos(latitude), des mailles de `area` ayant une valeur.
+
+    `df` a les colonnes time, lat, lon, sst ; les mailles hors sélection (le rectangle demandé
+    au serveur déborde du contour) et les mailles « terre » (NaN) sont écartées.
+    """
+    i, j = cell_index(df["lat"].to_numpy(), df["lon"].to_numpy())
+    wanted = set(area.cells)
+    df = df[[c in wanted for c in zip(i.tolist(), j.tolist())]]
+    df = df[(df["sst"] >= -3) & (df["sst"] <= 45)]
+    w = np.cos(np.radians(df["lat"]))
+    num = (df["sst"] * w).groupby(df["time"]).sum()
+    den = w.groupby(df["time"]).sum()
+    return (num / den).rename("sst").rename_axis("time").reset_index()
+
+
+def _lat_range(area: Area) -> tuple[int, int]:
+    rows = [i for i, _ in area.cells]
+    return min(rows), max(rows)
+
+
+def _erddap_area_chunk(area: Area, start: date, end: date, server: str) -> pd.DataFrame:
+    i0, i1 = _lat_range(area)
+    s = area.stride
+    parts = []
+    # Repère ERDDAP -180..180 : indice serveur k = (j + 720) % 1440, lon = -179.875 + 0.25 k.
+    for k0, k1 in lon_runs([j for _, j in area.cells], s, offset=NLON // 2):
+        sel = (
+            f"sst[({start}T12:00:00Z):1:({end}T12:00:00Z)][(0.0)]"
+            f"[({lat_of(i0):.3f}):{s}:({lat_of(i1):.3f})]"
+            f"[({-179.875 + RES * k0:.3f}):{s}:({-179.875 + RES * k1:.3f})]"
+        )
+        url = f"{server}/griddap/{config.get('ERDDAP_DATASET')}.csv?" + requests.utils.quote(sel, safe="():,.-T")
+        df = pd.read_csv(io.StringIO(_request(url)), skiprows=[1])
+        df["time"] = pd.to_datetime(df["time"]).dt.tz_localize(None).dt.normalize()
+        parts.append(df.rename(columns={"latitude": "lat", "longitude": "lon"})[["time", "lat", "lon", "sst"]])
+    return pd.concat(parts)
+
+
+def _years_per_request(area: Area) -> int:
+    """Années par requête ERDDAP pour rester vers 400 000 valeurs (~20 Mo de CSV) au plus."""
+    i0, i1 = _lat_range(area)
+    nlon = sum((b - a) // area.stride + 1 for a, b in lon_runs([j for _, j in area.cells], area.stride))
+    ncells = ((i1 - i0) // area.stride + 1) * nlon
+    return max(1, min(10, 400_000 // (ncells * 366)))
+
+
+def _fetch_erddap_area(area: Area, start: date, end: date, server: str) -> pd.DataFrame:
+    chunks, cur, step = [], start, _years_per_request(area)
+    while cur <= end:
+        stop = min(date(cur.year + step - 1, 12, 31), end)
+        print(f"  … {cur.year}-{stop.year}" if stop.year > cur.year else f"  … {cur.year}")
+        chunks.append(_area_mean(_erddap_area_chunk(area, cur, stop, server), area))
+        cur = stop + timedelta(days=1)
+    df = pd.concat(chunks)
+    if df.empty or df["sst"].isna().all():
+        raise ValueError("aucune maille océan dans la zone")
+    return df
+
+
+def _parse_psl_grid(text: str) -> pd.DataFrame:
+    """Lit la réponse OPeNDAP .ascii d'une grille sst[time][lat][lon] en table time, lat, lon, sst."""
+    body = text.split("---------------------------------------------", 1)[-1]
+    rows, arrays, block = [], {"time": [], "lat": [], "lon": []}, None
+    for line in body.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("sst."):
+            name = line[4:].split("[", 1)[0]
+            block = name if name in ("sst", "time", "lat", "lon") else None
+        elif block == "sst":
+            idx, values = line.split(",", 1)
+            t, a = (int(x) for x in re.findall(r"\d+", idx))
+            rows += [(t, a, b, float(v)) for b, v in enumerate(values.split(","))]
+        elif block in arrays:
+            arrays[block] += [float(v) for v in line.split(",")]
+    if not rows or not all(arrays.values()):
+        raise ValueError("réponse PSL inattendue")
+    t, a, b, v = map(np.array, zip(*rows))
+    times = pd.Timestamp("1800-01-01") + pd.to_timedelta(np.array(arrays["time"])[t], unit="D")
+    return pd.DataFrame({
+        "time": times.normalize(),
+        "lat": np.array(arrays["lat"])[a],
+        "lon": np.array(arrays["lon"])[b],
+        "sst": v,
+    })
+
+
+def _psl_area_year(year: int, area: Area, cache_dir: Path | None) -> pd.DataFrame:
+    """Moyenne sur la zone pour une année de PSL ; les années complètes sont mises en cache."""
+    psl, step, s = config.get("PSL_URL"), config.get_int("PSL_DAYS"), area.stride
+    cache = cache_dir / f"psl_area_{area.key}_{year}.csv" if cache_dir is not None else None
+    if cache is not None and cache.exists():
+        return pd.read_csv(cache, parse_dates=["time"])
+    i0, i1 = _lat_range(area)
+    n = _psl_ndays(year)
+    parts = []
+    for a in range(0, n, step):
+        b = min(a + step, n) - 1
+        for k0, k1 in lon_runs([j for _, j in area.cells], s):  # repère PSL 0..360 : k = j
+            url = (f"{psl}/sst.day.mean.{year}.nc.ascii?"
+                   f"sst%5B{a}:1:{b}%5D%5B{i0}:{s}:{i1}%5D%5B{k0}:{s}:{k1}%5D")
+            parts.append(_parse_psl_grid(_request(url)))
+    df = _area_mean(pd.concat(parts), area)
+    if cache is not None and year < date.today().year and df["sst"].notna().any():
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        df.to_csv(cache, index=False)
+    return df
+
+
+def _fetch_psl_area(area: Area, start: date, end: date, cache_dir: Path | None) -> pd.DataFrame:
+    years = range(start.year, end.year + 1)
+    print(f"  {len(years)} années à télécharger (plusieurs minutes la première fois ; "
+          "une interruption reprend là où elle s'est arrêtée).")
+    chunks = []
+    with ThreadPoolExecutor(config.get_int("PSL_WORKERS")) as pool:
+        futures = [pool.submit(_psl_area_year, y, area, cache_dir) for y in years]
+        try:
+            for k, fut in enumerate(as_completed(futures), 1):
+                chunks.append(fut.result())
+                print(f"  … {k}/{len(years)} années", end="\r", flush=True)
+        except BaseException:
+            pool.shutdown(cancel_futures=True)
+            raise
+        finally:
+            print()
+    df = pd.concat(chunks).sort_values("time")
+    if df["sst"].isna().all():
+        raise ValueError("aucune maille océan dans la zone")
+    return df[(df["time"] >= pd.Timestamp(start)) & (df["time"] <= pd.Timestamp(end))]
+
+
 def _short_reason(e: Exception) -> str:
     if isinstance(e, requests.ConnectTimeout):
         return "délai de connexion dépassé"
@@ -225,18 +362,29 @@ def _short_reason(e: Exception) -> str:
 def _download(
     lat: float, lon: float, start: date, end: date, cache_dir: Path | None
 ) -> pd.DataFrame:
-    """Essaie chaque source dans l'ordre et renvoie la première qui fournit les données."""
+    return _try_sources(
+        lambda server: _fetch_erddap(lat, lon, start, end, server),
+        lambda psl_cache: _fetch_psl(lat, lon, start, end, psl_cache),
+        cache_dir,
+    )
+
+
+def _try_sources(erddap, psl, cache_dir: Path | None) -> pd.DataFrame:
+    """Essaie chaque source dans l'ordre et renvoie la première qui fournit les données.
+
+    `erddap(server)` et `psl(cache_dir)` téléchargent auprès d'une source donnée.
+    """
     psl_cache = cache_dir / "psl" if cache_dir is not None else None
     sources = []
     for kind in config.get_list("SOURCES"):
         if kind == "erddap":
             sources += [
-                (server.split("/")[2], lambda s=server: _fetch_erddap(lat, lon, start, end, s))
+                (server.split("/")[2], lambda s=server: erddap(s))
                 for server in config.get_list("ERDDAP_SERVERS")
             ]
         elif kind == "psl":
             host = config.get("PSL_URL").split("/")[2]
-            sources.append((host, lambda: _fetch_psl(lat, lon, start, end, psl_cache)))
+            sources.append((host, lambda: psl(psl_cache)))
         else:
             raise DownloadError(f"Source inconnue dans MHW_WATCH_SOURCES : {kind!r} (attendu : erddap, psl)")
 
@@ -287,6 +435,42 @@ def fetch_sst(
     df = _download(lat, lon, start, end, cache_dir).dropna().drop_duplicates("time")
     if df.empty:
         raise DownloadError(f"Aucune SST valide pour ({lat}, {lon}) : le point est-il bien en mer ?")
+    s = df.set_index("time")["sst"].asfreq("D").interpolate(limit=5)
+    if cache is not None:
+        s.to_csv(cache)
+    return s
+
+
+def fetch_sst_area(
+    area: Area,
+    start: date = date(1982, 1, 1),
+    end: date | None = None,
+    cache_dir: Path | None = Path("data"),
+) -> pd.Series:
+    """Série quotidienne de SST (°C) moyennée sur les mailles océan d'une zone (voir wdpa.py).
+
+    Même cache CSV que `fetch_sst`, nommé d'après l'empreinte de la sélection de mailles.
+    """
+    end = end or (date.today() - timedelta(days=16))
+    start = max(start, FIRST_DAY)
+
+    cache = None
+    if cache_dir is not None:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache = cache_dir / f"oisst_area_{area.key}_{start}_{end}.csv"
+        if cache.exists():
+            s = pd.read_csv(cache, index_col=0, parse_dates=True).iloc[:, 0]
+            s.name = "sst"
+            if s.notna().any():
+                return s
+
+    df = _try_sources(
+        lambda server: _fetch_erddap_area(area, start, end, server),
+        lambda psl_cache: _fetch_psl_area(area, start, end, psl_cache),
+        cache_dir,
+    ).dropna().drop_duplicates("time")
+    if df.empty:
+        raise DownloadError("Aucune SST valide dans la zone : le contour touche-t-il bien la mer ?")
     s = df.set_index("time")["sst"].asfreq("D").interpolate(limit=5)
     if cache is not None:
         s.to_csv(cache)
