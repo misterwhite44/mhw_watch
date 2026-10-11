@@ -3,7 +3,7 @@
 Tous les liens ont été ouverts et vérifiés le 11/10/2026, sauf ceux marqués *(non vérifié)*.
 Pour les explications de base, voir aussi [../comprendre-mhw-watch.md](../comprendre-mhw-watch.md).
 
-## Ton projet
+##  projet
 - Dépôt GitHub : https://github.com/misterwhite44/mhw_watch
 - Tableau de bord en ligne : https://misterwhite44.github.io/mhw_watch/
 
