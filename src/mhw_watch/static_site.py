@@ -106,6 +106,9 @@ def _site_section(status: dashboard.SiteStatus, out_dir: Path) -> str:
     s = status.site
     head = (f'<section class="card" id="{s.key}"><h2>{escape(s.name)}</h2>'
             f'<p class="muted">{escape(s.region)} · {s.lat:.2f}, {s.lon:.2f}</p>{_badge(status)}')
+    zone = dashboard.zone_label(out_dir, s.key)
+    if zone:
+        head += f'<p class="muted">Zone analysée : {escape(zone)}</p>'
     if not status.has_data:
         return head + '<p class="muted">Pas encore de données pour ce site.</p></section>'
     events = dashboard.read_events(out_dir, s.key)

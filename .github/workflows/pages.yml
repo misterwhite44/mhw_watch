@@ -38,6 +38,12 @@ jobs:
           key: psl-${{ github.run_id }}
           restore-keys: psl-
 
+      # Contours WDPA des AMP (changent rarement : rechargés si le cache est perdu).
+      - uses: actions/cache@v4
+        with:
+          path: data/wdpa
+          key: wdpa-${{ hashFiles('src/mhw_watch/sites.py') }}
+
       - name: Analyse de toutes les AMP
         run: mhw-watch analyze --site all
 

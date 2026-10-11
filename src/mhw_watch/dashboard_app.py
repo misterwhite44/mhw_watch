@@ -110,6 +110,9 @@ def site_details(status: dashboard.SiteStatus, out: str, data_dir: str) -> None:
     s = status.site
     st.subheader(s.name)
     st.caption(f"{s.region} · {s.lat:.2f}, {s.lon:.2f}")
+    zone = dashboard.zone_label(out, s.key)
+    if zone:
+        st.caption(f"Zone analysée : {zone}")
 
     if not status.has_data:
         st.info(

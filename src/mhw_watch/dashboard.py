@@ -6,6 +6,7 @@ Le tableau de bord ne télécharge rien lui-même : il relit les résultats écr
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import threading
@@ -69,6 +70,17 @@ def read_yearly(out_dir: Path, key: str) -> pd.DataFrame:
     if not path.is_file():
         return pd.DataFrame()
     return pd.read_csv(path, index_col="year")
+
+
+def zone_label(out_dir: Path, key: str) -> str:
+    """Zone analysée (contour WDPA ou point), d'après `zone.json` écrit par `analyze`."""
+    path = Path(out_dir) / key / "zone.json"
+    if not path.is_file():
+        return ""
+    zone = json.loads(path.read_text(encoding="utf-8"))
+    if zone.get("mode") == "polygon":
+        return f"Contour WDPA {zone.get('wdpa_id')} : {zone.get('description', '')}"
+    return "Point représentatif (une maille 0,25°)"
 
 
 def status_from_daily(site: Site, daily: pd.DataFrame | None) -> SiteStatus:
