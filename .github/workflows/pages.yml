@@ -1,5 +1,5 @@
-# Chaque jour : télécharge les dernières données NOAA, relance la détection sur toutes les AMP
-# et publie le tableau de bord (version HTML statique) sur GitHub Pages.
+# Chaque jour : télécharge les dernières données NOAA, relance la détection sur toutes les AMP,
+# envoie une alerte si une AMP entre en catégorie II ou plus, et publie le tableau de bord (version HTML statique) sur GitHub Pages.
 # Prérequis (une seule fois) : Settings > Pages > Source = « GitHub Actions ».
 name: Mise à jour quotidienne
 
@@ -40,6 +40,30 @@ jobs:
 
       - name: Analyse de toutes les AMP
         run: mhw-watch analyze --site all
+
+      # Mémoire des alertes déjà envoyées, pour n'alerter qu'à l'entrée en catégorie II+.
+      - uses: actions/cache@v4
+        with:
+          path: alerts
+          key: alerts-${{ github.run_id }}
+          restore-keys: alerts-
+
+      # Chaque canal n'est actif que si ses secrets existent (Settings > Secrets > Actions).
+      # Un échec d'envoi est signalé mais n'empêche pas la publication du site.
+      - name: Alertes catégorie II+
+        continue-on-error: true
+        run: mhw-watch alert --out outputs --state alerts/state.json
+        env:
+          MHW_WATCH_SMTP_HOST: ${{ secrets.MHW_WATCH_SMTP_HOST }}
+          MHW_WATCH_SMTP_PORT: ${{ secrets.MHW_WATCH_SMTP_PORT }}
+          MHW_WATCH_SMTP_USER: ${{ secrets.MHW_WATCH_SMTP_USER }}
+          MHW_WATCH_SMTP_PASSWORD: ${{ secrets.MHW_WATCH_SMTP_PASSWORD }}
+          MHW_WATCH_ALERT_EMAIL_FROM: ${{ secrets.MHW_WATCH_ALERT_EMAIL_FROM }}
+          MHW_WATCH_ALERT_EMAIL_TO: ${{ secrets.MHW_WATCH_ALERT_EMAIL_TO }}
+          MHW_WATCH_BLUESKY_HANDLE: ${{ secrets.MHW_WATCH_BLUESKY_HANDLE }}
+          MHW_WATCH_BLUESKY_APP_PASSWORD: ${{ secrets.MHW_WATCH_BLUESKY_APP_PASSWORD }}
+          MHW_WATCH_MASTODON_INSTANCE: ${{ secrets.MHW_WATCH_MASTODON_INSTANCE }}
+          MHW_WATCH_MASTODON_TOKEN: ${{ secrets.MHW_WATCH_MASTODON_TOKEN }}
 
       - name: Export du site statique
         run: mhw-watch export-site --out outputs --dest site

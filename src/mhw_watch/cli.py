@@ -8,6 +8,7 @@ Exemples :
     python -m mhw_watch dashboard               # tableau de bord web (navigateur)
     python -m mhw_watch analyze --site all      # tous les sites connus
     python -m mhw_watch export-site --dest site # tableau de bord en HTML statique (GitHub Pages)
+    python -m mhw_watch alert --dry-run         # alertes catégorie II+ (sans rien envoyer)
 """
 
 from __future__ import annotations
@@ -95,6 +96,12 @@ def cmd_export_site(args: argparse.Namespace) -> None:
     print(f"Site statique écrit : {build_site(args.out, args.dest)}")
 
 
+def cmd_alert(args: argparse.Namespace) -> None:
+    from .alerts import run
+
+    sys.exit(run(Path(args.out), Path(args.state), dry_run=args.dry_run))
+
+
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="mhw-watch", description="Vagues de chaleur marines dans les AMP")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -125,6 +132,12 @@ def main(argv: list[str] | None = None) -> None:
     e.add_argument("--out", default="outputs", help="Dossier des résultats de `analyze`")
     e.add_argument("--dest", default="site", help="Dossier où écrire le site")
     e.set_defaults(func=cmd_export_site)
+
+    al = sub.add_parser("alert", help="Alerter (e-mail, Bluesky, Mastodon) si une AMP entre en catégorie II+")
+    al.add_argument("--out", default="outputs", help="Dossier des résultats de `analyze`")
+    al.add_argument("--state", default="alerts/state.json", help="Fichier où mémoriser les alertes déjà envoyées")
+    al.add_argument("--dry-run", action="store_true", help="Afficher les alertes sans rien envoyer ni mémoriser")
+    al.set_defaults(func=cmd_alert)
 
     args = p.parse_args(argv)
     config.load_dotenv()

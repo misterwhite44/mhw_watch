@@ -65,6 +65,20 @@ Le workflow [`.github/workflows/pages.yml`](.github/workflows/pages.yml) tourne 
 
 Pour l'activer (une seule fois) : **Settings > Pages > Source : GitHub Actions**, puis onglet **Actions > Mise à jour quotidienne > Run workflow** pour une première publication sans attendre le lendemain. Le site est alors sur https://misterwhite44.github.io/mhw_watch/. Note : GitHub suspend les tâches planifiées d'un dépôt public sans activité pendant 60 jours (un clic sur « Enable workflow » les relance).
 
+### Alertes (catégorie II ou plus)
+
+`mhw-watch alert` relit les résultats de `analyze` et prévient quand une AMP **entre** en vague de chaleur de catégorie II (Forte) ou plus, ou quand l'épisode s'aggrave (II → III → IV). L'état est mémorisé dans `alerts/state.json` : pas de nouvelle alerte tant que l'épisode continue, même si la catégorie du jour fait le yo-yo ; un nouvel épisode réalerte. `mhw-watch alert --dry-run` affiche les messages sans rien envoyer ni mémoriser.
+
+Le workflow quotidien lance la commande après l'analyse (mémoire gardée dans le cache GitHub Actions). Chaque canal ne s'active que si ses secrets existent, dans **Settings > Secrets and variables > Actions > New repository secret** :
+
+| Canal | Secrets |
+|---|---|
+| E-mail (SMTP) | `MHW_WATCH_SMTP_HOST`, `MHW_WATCH_SMTP_USER`, `MHW_WATCH_SMTP_PASSWORD`, `MHW_WATCH_ALERT_EMAIL_TO` (plusieurs adresses séparées par des virgules) ; facultatifs : `MHW_WATCH_SMTP_PORT` (587 par défaut, 465 pour SSL), `MHW_WATCH_ALERT_EMAIL_FROM` |
+| Bluesky | `MHW_WATCH_BLUESKY_HANDLE` (ex. `mhw-watch.bsky.social`), `MHW_WATCH_BLUESKY_APP_PASSWORD` (Settings > Privacy and security > App passwords) |
+| Mastodon | `MHW_WATCH_MASTODON_INSTANCE` (ex. `https://mastodon.social`), `MHW_WATCH_MASTODON_TOKEN` (Préférences > Développement > Nouvelle application, droit `write:statuses`) |
+
+Exemple Gmail : hôte `smtp.gmail.com`, port 587, et un *mot de passe d'application* Google à la place du mot de passe du compte. En local, les mêmes variables vont dans le `.env`.
+
 ### Résultats (dans `outputs/<site>/`)
 
 | Fichier | Contenu |
@@ -103,10 +117,11 @@ Références :
 ```
 mhw-watch/
 ├── src/mhw_watch/
-│   ├── cli.py         # ligne de commande (sites, analyze, dashboard, export-site)
+│   ├── cli.py         # ligne de commande (sites, analyze, dashboard, export-site, alert)
 │   ├── dashboard.py   # logique du tableau de bord (état des sites, lecture des résultats)
 │   ├── dashboard_app.py  # interface web Streamlit (carte + historique)
 │   ├── static_site.py # export HTML statique du tableau de bord (GitHub Pages)
+│   ├── alerts.py      # alertes catégorie II+ (e-mail, Bluesky, Mastodon)
 │   ├── config.py      # réglages des sources (variables MHW_WATCH_*, fichier .env)
 │   ├── data.py        # téléchargement NOAA OISST (ERDDAP, PSL en secours) + cache
 │   ├── detect.py      # climatologie, détection et catégories (Hobday)
@@ -126,7 +141,7 @@ Idées pour faire grandir le projet, dans un ordre raisonnable :
 
 1. **Carte multi-AMP** : analyser toutes les AMP d'une région (contours depuis la base mondiale [WDPA / Protected Planet](https://www.protectedplanet.net/)) et moyenner la SST sur le polygone plutôt qu'en un point.
 3. ~~**Mise à jour automatique**~~ : fait (workflow quotidien + GitHub Pages, voir plus haut).
-4. **Alertes** : notification (e-mail, Mastodon/Bluesky) quand une AMP entre en catégorie II ou plus.
+4. ~~**Alertes**~~ : fait (e-mail, Bluesky, Mastodon, voir plus haut).
 5. **Données plus fines** : Copernicus Marine (SST Méditerranée haute résolution, produits `SST_MED_*`) via le paquet `copernicusmarine`.
 6. **Impacts biologiques** : *Degree Heating Weeks* pour les coraux (NOAA Coral Reef Watch), croisement avec les observations de mortalité (base T-MEDNet en Méditerranée).
 7. **Pression de pêche** : croiser avec l'effort de pêche de [Global Fishing Watch](https://globalfishingwatch.org/our-apis/) (API gratuite avec inscription) pour étudier stress thermique et pression humaine ensemble.

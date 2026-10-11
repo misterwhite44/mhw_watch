@@ -25,6 +25,19 @@ DEFAULTS = {
     "CONNECT_TIMEOUT": "10",  # s : un serveur injoignable est vite abandonné
     "READ_TIMEOUT": "180",  # s : une grosse requête peut être longue à préparer côté serveur
     "RETRIES": "1",  # nouvelles tentatives par serveur après un échec réseau
+    # Alertes (`mhw-watch alert`) : un canal vide reste désactivé.
+    "SITE_URL": "https://misterwhite44.github.io/mhw_watch/",  # lien ajouté aux alertes
+    "SMTP_HOST": "",
+    "SMTP_PORT": "587",  # 587 = STARTTLS, 465 = SSL direct
+    "SMTP_USER": "",
+    "SMTP_PASSWORD": "",
+    "ALERT_EMAIL_FROM": "",  # par défaut SMTP_USER
+    "ALERT_EMAIL_TO": "",  # destinataires, séparés par des virgules
+    "BLUESKY_SERVICE": "https://bsky.social",
+    "BLUESKY_HANDLE": "",
+    "BLUESKY_APP_PASSWORD": "",  # mot de passe d'application, pas celui du compte
+    "MASTODON_INSTANCE": "",  # ex. https://mastodon.social
+    "MASTODON_TOKEN": "",  # jeton d'application avec le droit write:statuses
 }
 
 
